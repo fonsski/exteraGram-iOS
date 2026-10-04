@@ -1,0 +1,131 @@
+name: Build iOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish the IPA as a GitHub release
+        type: boolean
+        default: false
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Sources are copied here before building: absolute paths end up in the binary,
+  # so they must stay identical between runs for the Bazel cache to remain valid.
+  SOURCE_DIR: /Users/Shared/telegram-ios
+  BAZEL_USER_ROOT: /private/var/tmp/_bazel_ci
+  BAZEL_CACHE_DIR: /Users/Shared/telegram-bazel-cache
+
+jobs:
+  build:
+    name: Build unsigned IPA
+    runs-on: macos-26
+    timeout-minutes: 360
+    permissions:
+      contents: write # required to create the release when publish_release is set
+
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0 # the build number is derived from the commit count
+
+      - name: Select Xcode
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open("versions.json"))["xcode"])')
+          xcode_path="/Applications/Xcode_${version}.app"
+          if [ ! -d "$xcode_path" ]; then
+            echo "::error::Xcode ${version} required by versions.json is not installed on this runner"
+            ls /Applications | grep -i '^Xcode' || true
+            exit 1
+          fi
+          sudo xcode-select -s "${xcode_path}/Contents/Developer"
+          xcodebuild -version
+
+      - name: Prepare canonical source directory
+        run: |
+          sudo mkdir -p /Users/Shared
+          sudo chown "$USER" /Users/Shared
+          rm -rf "$SOURCE_DIR"
+          cp -R "$GITHUB_WORKSPACE" "$SOURCE_DIR"
+
+      - name: Restore Bazel cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BAZEL_CACHE_DIR }}
+          key: bazel-${{ runner.os }}-${{ hashFiles('versions.json', 'MODULE.bazel.lock') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ hashFiles('versions.json', 'MODULE.bazel.lock') }}-
+            bazel-${{ runner.os }}-
+
+      - name: Generate build configuration
+        working-directory: ${{ env.SOURCE_DIR }}
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+        run: |
+          python3 scripts/ci/prepare_configuration.py \
+            --base build-system/appstore-configuration.json \
+            --output build-system/ci-configuration.json
+
+      - name: Compute version
+        id: version
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          offset=$(cat build_number_offset)
+          build_number=$(( $(git rev-list --count HEAD) + offset ))
+          app_version=$(python3 -c 'import json; print(json.load(open("versions.json"))["app"])')
+          echo "build_number=${build_number}" >> "$GITHUB_OUTPUT"
+          echo "app_version=${app_version}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+          python3 -u build-system/Make/Make.py \
+            --bazelUserRoot="$BAZEL_USER_ROOT" \
+            --cacheDir="$BAZEL_CACHE_DIR" \
+            build \
+            --configurationPath=build-system/ci-configuration.json \
+            --codesigningInformationPath=build-system/fake-codesigning \
+            --configuration=release_arm64 \
+            --buildNumber="${{ steps.version.outputs.build_number }}" \
+            --outputBuildArtifactsPath=build/artifacts
+
+      - name: Name artifacts
+        id: artifacts
+        working-directory: ${{ env.SOURCE_DIR }}/build/artifacts
+        run: |
+          name="exteraGram-${{ steps.version.outputs.app_version }}-${{ steps.version.outputs.build_number }}"
+          mv Telegram.ipa "${name}.ipa"
+          ditto -c -k --keepParent DSYMs "${name}.dSYMs.zip"
+          rm -rf DSYMs
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifacts.outputs.name }}
+          path: ${{ env.SOURCE_DIR }}/build/artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish release
+        if: ${{ inputs.publish_release }}
+        working-directory: ${{ env.SOURCE_DIR }}/build/artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "build-${{ steps.version.outputs.build_number }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "exteraGram iOS ${{ steps.version.outputs.app_version }} (${{ steps.version.outputs.build_number }})" \
+            --notes "Unsigned build. Sign it yourself (AltStore, Sideloadly, TrollStore) before installing." \
+            ./*
