@@ -115,9 +115,9 @@ jobs:
         working-directory: ${{ env.SOURCE_DIR }}/build/artifacts
         run: |
           name="exteraGram-${{ steps.version.outputs.app_version }}-${{ steps.version.outputs.build_number }}${{ inputs.smoke && '-smoke' || '' }}"
+          # Make.py already packs the dSYMs into Telegram.DSYMs.zip
           mv Telegram.ipa "${name}.ipa"
-          ditto -c -k --keepParent DSYMs "${name}.dSYMs.zip"
-          rm -rf DSYMs
+          mv Telegram.DSYMs.zip "${name}.dSYMs.zip"
           echo "name=${name}" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifacts
