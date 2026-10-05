@@ -277,6 +277,8 @@ public final class SharedAccountContextImpl: SharedAccountContext {
     public let currentStickerSettings: Atomic<StickerSettings>
     private var stickerSettingsDisposable: Disposable?
     
+    private var exteraSettingsDisposable: Disposable?
+    
     private let automaticMediaDownloadSettingsDisposable = MetaDisposable()
     
     private var immediateExperimentalUISettingsValue = Atomic<ExperimentalUISettings>(value: ExperimentalUISettings.defaultSettings)
@@ -513,6 +515,12 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                     let _ = strongSelf.currentChatSettings.swap(settings)
                 }
             }
+        })
+        
+        self.exteraSettingsDisposable = (self.accountManager.sharedData(keys: [ApplicationSpecificSharedDataKeys.exteraSettings])
+        |> deliverOnMainQueue).start(next: { sharedData in
+            let settings = sharedData.entries[ApplicationSpecificSharedDataKeys.exteraSettings]?.get(ExteraSettings.self) ?? .defaultSettings
+            ExteraSettingsCache.update(settings)
         })
         
         let immediateExperimentalUISettingsValue = self.immediateExperimentalUISettingsValue
@@ -1110,6 +1118,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         self.mediaDisplaySettingsDisposable?.dispose()
         self.chatSettingsDisposable?.dispose()
         self.stickerSettingsDisposable?.dispose()
+        self.exteraSettingsDisposable?.dispose()
         self.callDisposable?.dispose()
         self.groupCallDisposable?.dispose()
         self.callStateDisposable?.dispose()
