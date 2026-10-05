@@ -67,7 +67,8 @@ jobs:
           cp -R "$GITHUB_WORKSPACE" "$SOURCE_DIR"
 
       - name: Restore Bazel cache
-        uses: actions/cache@v4
+        id: bazel-cache
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.BAZEL_CACHE_DIR }}
           key: bazel-${{ runner.os }}-${{ hashFiles('versions.json', 'MODULE.bazel.lock') }}-${{ github.sha }}
@@ -140,3 +141,12 @@ jobs:
             --title "exteraGram iOS ${{ steps.version.outputs.app_version }} (${{ steps.version.outputs.build_number }})" \
             --notes "Unsigned build. Sign it yourself (AltStore, Sideloadly, TrollStore) before installing." \
             ./*
+
+      # Saved separately from the restore so that the cache survives a failed run:
+      # a full build takes over an hour and its compiled actions stay valid.
+      - name: Save Bazel cache
+        if: ${{ always() && steps.bazel-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.BAZEL_CACHE_DIR }}
+          key: ${{ steps.bazel-cache.outputs.cache-primary-key }}
