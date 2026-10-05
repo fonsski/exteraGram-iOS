@@ -20,7 +20,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--base", required=True, help="configuration to start from")
     parser.add_argument("--output", required=True, help="where to write the result")
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="keep the credentials of the base configuration; for compile checks only, "
+        "the result must not be distributed",
+    )
     args = parser.parse_args()
+
+    if args.smoke:
+        print("warning: smoke build, using the credentials of the base configuration", file=sys.stderr)
+        with open(args.base, encoding="utf-8") as source, open(args.output, "w", encoding="utf-8") as target:
+            target.write(source.read())
+        return 0
 
     api_id = os.environ.get("TG_API_ID", "").strip()
     api_hash = os.environ.get("TG_API_HASH", "").strip()
