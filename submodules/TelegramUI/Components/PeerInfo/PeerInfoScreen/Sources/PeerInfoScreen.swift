@@ -168,6 +168,7 @@ enum PeerInfoSettingsSection {
     case appearance
     case language
     case stickers
+    case exteraGram
     case premium
     case premiumGift
     case passport
