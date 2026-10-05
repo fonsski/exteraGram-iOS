@@ -3,6 +3,10 @@ name: Build iOS
 on:
   workflow_dispatch:
     inputs:
+      smoke:
+        description: Compile check with the upstream API credentials (not for distribution)
+        type: boolean
+        default: false
       publish_release:
         description: Publish the IPA as a GitHub release
         type: boolean
@@ -31,6 +35,12 @@ jobs:
       contents: write # required to create the release when publish_release is set
 
     steps:
+      - name: Reject smoke builds that would be published
+        if: ${{ inputs.smoke && inputs.publish_release }}
+        run: |
+          echo "::error::A smoke build uses the upstream API credentials and must not be released"
+          exit 1
+
       - name: Check out sources
         uses: actions/checkout@v4
         with:
@@ -73,7 +83,8 @@ jobs:
         run: |
           python3 scripts/ci/prepare_configuration.py \
             --base build-system/appstore-configuration.json \
-            --output build-system/ci-configuration.json
+            --output build-system/ci-configuration.json \
+            ${{ inputs.smoke && '--smoke' || '' }}
 
       - name: Compute version
         id: version
@@ -103,7 +114,7 @@ jobs:
         id: artifacts
         working-directory: ${{ env.SOURCE_DIR }}/build/artifacts
         run: |
-          name="exteraGram-${{ steps.version.outputs.app_version }}-${{ steps.version.outputs.build_number }}"
+          name="exteraGram-${{ steps.version.outputs.app_version }}-${{ steps.version.outputs.build_number }}${{ inputs.smoke && '-smoke' || '' }}"
           mv Telegram.ipa "${name}.ipa"
           ditto -c -k --keepParent DSYMs "${name}.dSYMs.zip"
           rm -rf DSYMs
@@ -115,7 +126,7 @@ jobs:
           name: ${{ steps.artifacts.outputs.name }}
           path: ${{ env.SOURCE_DIR }}/build/artifacts/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ inputs.smoke && 3 || 14 }}
 
       - name: Publish release
         if: ${{ inputs.publish_release }}
